@@ -1,16 +1,20 @@
 package com.nms.lite.utility;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import static com.nms.lite.utility.Constant.*;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 
 public class KeyGen
 {
+    private static final Logger logger = LoggerFactory.getLogger(KeyGen.class);
     public static long getUniqueKeyForName(String name)
     {
         try
         {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            MessageDigest digest = MessageDigest.getInstance(SHA_256);
 
             byte[] hashBytes = digest.digest(name.getBytes(StandardCharsets.UTF_8));
 
@@ -21,13 +25,13 @@ public class KeyGen
 
         catch (NoSuchAlgorithmException exception)
         {
-            exception.printStackTrace();
+            logger.error(exception.getMessage());
         }
 
         return -1;
     }
 
-    public static long byteArrayToLong(byte[] bytes)
+    private static long byteArrayToLong(byte[] bytes)
     {
         long value = 0;
 

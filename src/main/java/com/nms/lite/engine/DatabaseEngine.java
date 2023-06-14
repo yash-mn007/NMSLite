@@ -10,15 +10,21 @@ import io.vertx.core.eventbus.EventBus;
 import io.vertx.core.eventbus.Message;
 import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-import com.nms.lite.model.Credentials;
-import com.nms.lite.model.Discovery;
-import com.nms.lite.utility.Constant;
+import static com.nms.lite.utility.Constant.*;
 import com.nms.lite.utility.KeyGen;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
 public class DatabaseEngine extends AbstractVerticle
 {
+    private final Logger logger = LoggerFactory.getLogger(DatabaseEngine.class);
+    private final CredentialStore credentialStore = CredentialStore.getInstance();
+    private final DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
+    private final ProvisionStore provisionStore = ProvisionStore.getInstance();
+
+
     @Override
     public void start(Promise<Void> promise)
     {
@@ -26,41 +32,32 @@ public class DatabaseEngine extends AbstractVerticle
         {
             EventBus eventBus = vertx.eventBus();
 
-            eventBus.<JsonObject>localConsumer(Constant.CREATE_CREDENTIALS).handler(message -> create(Constant.CREDENTIALS, message));
+            eventBus.<JsonObject>localConsumer(DATABASE_OPERATIONS).handler(message ->
+            {
 
-            eventBus.<JsonObject>localConsumer(Constant.READ_CREDENTIALS).handler(message -> read(Constant.CREDENTIALS, message));
+                switch (message.body().getString(OPERATION))
+                {
+                    case CREATE -> create(message.body().getString(TYPE), message);
 
-            eventBus.<JsonObject>localConsumer(Constant.READ_ALL_CREDENTIALS).handler(message -> readAll(Constant.CREDENTIALS, message));
+                    case READ -> read(message.body().getString(TYPE), message);
 
-            eventBus.<JsonObject>localConsumer(Constant.DELETE_CREDENTIALS).handler(message -> delete(Constant.CREDENTIALS, message));
+                    case READ_ALL -> readAll(message.body().getString(TYPE), message);
 
-            eventBus.<JsonObject>localConsumer(Constant.CREATE_DISCOVERY).handler(message -> create(Constant.DISCOVERY, message));
+                    case UPDATE -> update(message.body().getString(TYPE), message);
 
-            eventBus.<JsonObject>localConsumer(Constant.READ_ALL_DISCOVERY).handler(message -> readAll(Constant.DISCOVERY, message));
+                    case DELETE -> delete(message.body().getString(TYPE), message);
 
-            eventBus.<JsonObject>localConsumer(Constant.READ_DISCOVERY).handler(message -> read(Constant.DISCOVERY, message));
+                    case RUN -> runProvision(message);
+                }
 
-            eventBus.<JsonObject>localConsumer(Constant.UPDATE_DISCOVERY).handler(message -> update(Constant.DISCOVERY, message));
-
-            eventBus.<JsonObject>localConsumer(Constant.DELETE_DISCOVERY).handler(message -> delete(Constant.DISCOVERY, message));
-
-            eventBus.<JsonObject>localConsumer(Constant.READ_ALL_PROVISION).handler(message -> readAll(Constant.PROVISION, message));
-
-            eventBus.<JsonObject>localConsumer(Constant.CREATE_PROVISION).handler(this::runProvision);
-
-            eventBus.<JsonObject>localConsumer(Constant.READ_PROVISION).handler(message -> read(Constant.PROVISION, message));
-
-            eventBus.<JsonObject>localConsumer(Constant.UPDATE_CREDENTIALS).handler(message -> update(Constant.CREDENTIALS, message));
-
-            eventBus.<JsonObject>localConsumer(Constant.DELETE_PROVISION).handler(message -> delete(Constant.PROVISION, message));
-
+            });
 
             promise.complete();
 
         }
         catch (Exception exception)
         {
-            exception.printStackTrace();
+            logger.error(exception.getMessage());
         }
     }
 
@@ -70,92 +67,54 @@ public class DatabaseEngine extends AbstractVerticle
         {
             var data = message.body();
 
-            vertx.executeBlocking(promise ->
+            switch (type)
             {
+                case CREDENTIALS ->
+                {
+                    long credId = KeyGen.getUniqueKeyForName(data.getString(CREDENTIALS_NAME));
 
-                switch (type)
+                    if (credentialStore.read(credId) != null)
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_ALREADY_EXISTS));
+                    }
+                    else
+                    {
+                        credentialStore.create(new JsonObject().put(ID, credId).put(NAME, data.getString(CREDENTIALS_NAME)).put(USERNAME, data.getString(USERNAME)).put(PASSWORD, data.getString(PASSWORD)).put(COUNTER, 0));
+
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, credId));
+                    }
+                }
+
+                case DISCOVERY ->
                 {
 
-                    case Constant.CREDENTIALS ->
+                    if (credentialStore.read(data.getLong(CREDENTIALS_ID)) != null)
                     {
-
-                        CredentialStore credentialStore = CredentialStore.getInstance();
-
-                        long credId = KeyGen.getUniqueKeyForName(data.getString(Constant.CREDENTIALS_NAME));
-
-                        if (credentialStore.read(credId) != null)
-                        {
-                            promise.fail(Constant.CREDENTIALS + Constant.DATA_ALREADY_EXISTS);
-                        }
-                        else
-                        {
-                            Credentials credentials = new Credentials(credId, data.getString(Constant.CREDENTIALS_NAME), data.getString(Constant.USERNAME), data.getString(Constant.PASSWORD));
-
-                            credentialStore.create(credentials);
-
-                            promise.complete(Constant.CREDENTIALS + Constant.CREATE_SUCCESS + Constant.COLON + credId);
-                        }
-                    }
-
-                    case Constant.DISCOVERY ->
-                    {
-
-                        DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                        long discoveryId = KeyGen.getUniqueKeyForName(data.getString(Constant.DISCOVERY_NAME));
+                        long discoveryId = KeyGen.getUniqueKeyForName(data.getString(DISCOVERY_NAME));
 
                         if (discoveryStore.read(discoveryId) != null)
                         {
-                            promise.fail(Constant.DISCOVERY + Constant.DATA_ALREADY_EXISTS);
+                            message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_ALREADY_EXISTS));
                         }
                         else
                         {
+                            discoveryStore.create(new JsonObject().put(ID, discoveryId).put(NAME, data.getString(DISCOVERY_NAME)).put(IP_ADDRESS, data.getString(IP_ADDRESS)).put(PORT_NUMBER, data.getInteger(PORT_NUMBER)).put(CREDENTIALS_ID, data.getLong(CREDENTIALS_ID)).put(DISCOVERED, false));
 
-                            Discovery discovery = new Discovery(discoveryId, data.getString(Constant.DISCOVERY_NAME), data.getString(Constant.IP_ADDRESS), data.getInteger(Constant.PORT_NUMBER), data.getLong(Constant.CREDENTIALS_ID));
-
-                            discoveryStore.create(discovery);
-
-                            promise.complete(Constant.DISCOVERY + Constant.CREATE_SUCCESS + Constant.COLON + discoveryId);
+                            message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, discoveryId));
                         }
                     }
-
+                    else
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
+                    }
                 }
-
-            }, handler ->
-            {
-                if (handler.succeeded())
-                {
-
-                    String[] successResult = handler.result().toString().split(Constant.COLON);
-
-                    JsonObject result = new JsonObject();
-
-                    result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                    result.put(Constant.STATUS_MESSAGE, Constant.CREATE_SUCCESS);
-
-                    result.put(Constant.STATUS_RESULT, Long.parseLong(successResult[1]));
-
-                    message.reply(result);
-
-                }
-                else
-                {
-                    JsonObject result = new JsonObject();
-
-                    result.put(Constant.STATUS, Constant.STATUS_FAIL);
-
-                    result.put(Constant.STATUS_MESSAGE, handler.cause().getMessage());
-
-                    message.reply(result);
-
-                }
-            });
+            }
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
     }
 
@@ -163,145 +122,61 @@ public class DatabaseEngine extends AbstractVerticle
     {
         try
         {
-
             var data = message.body();
 
-            vertx.executeBlocking(promise ->
+            switch (type)
             {
-                switch (type)
+                case CREDENTIALS ->
                 {
-                    case Constant.CREDENTIALS ->
+                    long credId = data.getLong(CREDENTIALS_ID);
+
+                    if (credentialStore.read(credId) != null)
                     {
-                        CredentialStore credentialStore = CredentialStore.getInstance();
-
-                        long credId = data.getLong(Constant.CREDENTIALS_ID);
-
-                        if (credentialStore.read(credId) != null)
-                        {
-                            Credentials credentials = credentialStore.read(credId);
-
-                            promise.complete(credentials);
-                        }
-                        else
-                        {
-                            promise.fail(Constant.CREDENTIALS + Constant.DATA_DOES_NOT_EXIST);
-                        }
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, credentialStore.read(credId)));
                     }
-
-                    case Constant.DISCOVERY ->
+                    else
                     {
-                        DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                        long discoveryId = data.getLong(Constant.DISCOVERY_ID);
-
-                        if (discoveryStore.read(discoveryId) != null)
-                        {
-                            Discovery discovery = discoveryStore.read(discoveryId);
-
-                            promise.complete(discovery);
-                        }
-                        else
-                        {
-                            promise.fail(Constant.DISCOVERY + Constant.DATA_DOES_NOT_EXIST);
-                        }
-                    }
-
-                    case Constant.PROVISION ->
-                    {
-                        ProvisionStore provisionStore = ProvisionStore.getInstance();
-
-                        long provisionId = data.getLong(Constant.PROVISION_ID);
-
-                        List<String> provision = provisionStore.read(String.valueOf(provisionId));
-
-                        if (provision != null)
-                        {
-                            JsonObject provisionData = new JsonObject();
-
-                            provisionData.put(Constant.STATUS_RESULT, new JsonObject(provision.get(0)));
-
-                            provisionData.put(Constant.CREDENTIALS_ID, provision.get(1));
-
-                            promise.complete(provisionData);
-                        }
-
-                        else
-                        {
-                            promise.fail(Constant.PROVISION + Constant.DATA_DOES_NOT_EXIST);
-                        }
-
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
                     }
                 }
-            }, handler ->
-            {
-                if (handler.succeeded())
+
+                case DISCOVERY ->
                 {
-                    if (handler.result() instanceof Credentials credentials)
+                    long discoveryId = data.getLong(DISCOVERY_ID);
+
+                    if (discoveryStore.read(discoveryId) != null)
                     {
-
-                        JsonObject result = new JsonObject();
-
-                        result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                        result.put(Constant.STATUS_MESSAGE, Constant.READ_SUCCESS);
-
-                        result.put(Constant.STATUS_RESULT, credentials.toJsonObject());
-
-                        message.reply(result);
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, discoveryStore.read(discoveryId)));
                     }
-                    else if (handler.result() instanceof Discovery discovery)
+                    else
                     {
-
-                        JsonObject result = new JsonObject();
-
-                        result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                        result.put(Constant.STATUS_MESSAGE, Constant.READ_SUCCESS);
-
-                        result.put(Constant.STATUS_RESULT, discovery.toJsonObject());
-
-                        message.reply(result);
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
                     }
+                }
 
-                    else if (handler.result() instanceof JsonObject)
+                case PROVISION ->
+                {
+                    long provisionId = data.getLong(PROVISION_ID);
+
+                    List<String> provision = provisionStore.read(String.valueOf(provisionId));
+
+                    if (provision.size() > 0)
                     {
-                        JsonObject result = (JsonObject) handler.result();
-
-                        JsonObject provisionData = new JsonObject();
-
-                        provisionData.put(Constant.PROVISION, result.getJsonObject(Constant.PROVISION_ID));
-
-                        provisionData.put(Constant.CREDENTIALS_ID, Constant.CREDENTIALS_ID);
-
-                        result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                        result.put(Constant.STATUS_MESSAGE, Constant.READ_SUCCESS);
-
-                        result.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
-
-                        message.reply(result);
-
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, new JsonObject(provision.get(0)).put(CREDENTIALS_ID, Long.parseLong(provision.get(1)))));
+                    }
+                    else
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
                     }
 
                 }
-                else
-                {
-                    JsonObject result = new JsonObject();
-
-                    result.put(Constant.STATUS, Constant.STATUS_FAIL);
-
-                    result.put(Constant.STATUS_MESSAGE, handler.cause().getMessage());
-
-                    result.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                    message.reply(result);
-                }
-            });
+            }
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
     }
 
@@ -309,134 +184,102 @@ public class DatabaseEngine extends AbstractVerticle
     {
         try
         {
-
             var data = message.body();
 
-            vertx.executeBlocking(promise ->
+            switch (type)
             {
-                switch (type)
+                case CREDENTIALS ->
                 {
-                    case Constant.CREDENTIALS ->
+                    long credentialsId = data.getLong(CREDENTIALS_ID);
+
+                    if (credentialStore.read(credentialsId) != null)
                     {
-                        CredentialStore credentialsDb = CredentialStore.getInstance();
+                        JsonObject credentials = credentialStore.read(credentialsId);
 
-                        long credentialsId = data.getLong(Constant.CREDENTIALS_ID);
-
-                        if (credentialsDb.read(credentialsId) != null)
+                        data.fieldNames().forEach(change ->
                         {
-                            Credentials credentials = credentialsDb.read(credentialsId);
 
-                            data.fieldNames().forEach(change ->
+                            if (change.equalsIgnoreCase(USERNAME))
                             {
+                                credentials.put(USERNAME, data.getString(USERNAME));
+                            }
 
-                                if (change.equalsIgnoreCase(Constant.USERNAME))
-                                {
-                                    credentials.setUsername(data.getString(Constant.USERNAME));
-                                }
+                            if (change.equalsIgnoreCase(PASSWORD))
+                            {
+                                credentials.put(PASSWORD, data.getString(PASSWORD));
+                            }
+                        });
 
-                                if (change.equalsIgnoreCase(Constant.PASSWORD))
-                                {
-                                    credentials.setPassword(data.getString(Constant.PASSWORD));
-                                }
-                            });
+                        credentialStore.update(credentials);
 
-                            credentialsDb.update(credentials);
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS));
 
-                            promise.complete(new JsonObject().put(Constant.TYPE, Constant.CREDENTIALS).put(Constant.STATUS, Constant.STATUS_SUCCESS));
-
-
-                        }
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.TYPE, Constant.CREDENTIALS).put(Constant.STATUS, Constant.STATUS_FAIL).encode());
-                        }
                     }
-
-                    case Constant.DISCOVERY ->
+                    else
                     {
-                        DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                        long discoveryId;
-
-                        if (data.containsKey(Constant.DISCOVERY_NAME))
-                        {
-                            discoveryId = KeyGen.getUniqueKeyForName(data.getString(Constant.DISCOVERY_NAME));
-                        }
-
-                        else
-                        {
-                            discoveryId = data.getLong(Constant.DISCOVERY_ID);
-                        }
-
-                        if (discoveryStore.read(discoveryId) != null)
-                        {
-                            Discovery discovery = discoveryStore.read(discoveryId);
-
-                            data.fieldNames().forEach(change ->
-                            {
-
-                                if (change.equalsIgnoreCase(Constant.IP_ADDRESS))
-                                {
-                                    discovery.setIp(data.getString(Constant.IP_ADDRESS));
-                                }
-
-                                if (change.equalsIgnoreCase(Constant.PORT_NUMBER))
-                                {
-                                    discovery.setPort(data.getInteger(Constant.PORT_NUMBER));
-                                }
-
-                                if (change.equalsIgnoreCase(Constant.DISCOVERED))
-                                {
-                                    discovery.setDiscovered(data.getBoolean(Constant.DISCOVERED));
-                                }
-
-                                if (change.equalsIgnoreCase(Constant.CREDENTIALS_ID))
-                                {
-                                    discovery.setCredentialProfileId(data.getLong(Constant.CREDENTIALS_ID));
-                                }
-                            });
-
-                            discoveryStore.update(discovery);
-
-                            promise.complete(new JsonObject().put(Constant.TYPE, Constant.DISCOVERY).put(Constant.STATUS, Constant.STATUS_SUCCESS));
-
-
-                        }
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.TYPE, Constant.DISCOVERY).put(Constant.STATUS, Constant.STATUS_FAIL).encode());
-                        }
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
                     }
                 }
 
-            }, handler ->
-            {
-                if (handler.succeeded())
+                case DISCOVERY ->
                 {
-                    JsonObject successResult = (JsonObject) handler.result();
+                    long discoveryId;
 
-                    successResult.put(Constant.STATUS_MESSAGE, Constant.UPDATE_SUCCESS);
+                    if (data.containsKey(DISCOVERY_NAME))
+                    {
+                        discoveryId = KeyGen.getUniqueKeyForName(data.getString(DISCOVERY_NAME));
+                    }
+                    else
+                    {
+                        discoveryId = data.getLong(DISCOVERY_ID);
+                    }
 
-                    message.reply(successResult);
+                    if (discoveryStore.read(discoveryId) != null)
+                    {
+                        JsonObject discovery = discoveryStore.read(discoveryId);
 
+                        data.fieldNames().forEach(change ->
+                        {
+
+                            if (change.equalsIgnoreCase(IP_ADDRESS))
+                            {
+                                discovery.put(IP_ADDRESS, data.getString(IP_ADDRESS));
+                            }
+
+                            if (change.equalsIgnoreCase(PORT_NUMBER))
+                            {
+                                discovery.put(PORT_NUMBER, data.getInteger(PORT_NUMBER));
+                            }
+
+                            if (change.equalsIgnoreCase(DISCOVERED))
+                            {
+                                discovery.put(DISCOVERED, data.getBoolean(DISCOVERED));
+                            }
+
+                            if (change.equalsIgnoreCase(CREDENTIALS_ID))
+                            {
+                                discovery.put(CREDENTIALS_ID, data.getLong(CREDENTIALS_ID));
+                            }
+                        });
+
+                        discoveryStore.update(discovery);
+
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS));
+
+                    }
+                    else
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
+                    }
                 }
+            }
 
-                else
-                {
-                    JsonObject errorResult = new JsonObject(handler.cause().getMessage());
-
-                    errorResult.put(Constant.STATUS_MESSAGE, Constant.DATA_DOES_NOT_EXIST);
-
-                    message.reply(errorResult);
-
-                }
-
-            });
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
     }
 
@@ -446,292 +289,107 @@ public class DatabaseEngine extends AbstractVerticle
         {
             var data = message.body();
 
-            vertx.executeBlocking(promise ->
+            JsonObject discovery = discoveryStore.read(data.getLong(DISCOVERY_ID));
+
+            if (discovery != null)
             {
-                JsonObject result = new JsonObject();
-
-                long discoveryId = data.getLong(Constant.DISCOVERY_ID);
-
-                ProvisionStore provisionStore = ProvisionStore.getInstance();
-
-                DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                Discovery discovery = discoveryStore.read(discoveryId);
-
-                if (discovery != null)
+                if (discovery.getBoolean(DISCOVERED))
                 {
-                    if (discovery.getDiscovered())
+                    if (!provisionStore.containsIp(discovery.getString(IP_ADDRESS)))
                     {
-                        if (!provisionStore.containsIp(discovery.getIp()))
+                        JsonObject credentials = credentialStore.read(discovery.getLong(CREDENTIALS_ID));
+
+                        if (credentials != null)
                         {
-                            CredentialStore credentialStore = CredentialStore.getInstance();
+                            long provisionId = Global.provisionCounter.incrementAndGet();
 
-                            Credentials credentials = credentialStore.read(discovery.getCredentialProfileId());
+                            provisionStore.create(discovery.getString(IP_ADDRESS), String.valueOf(provisionId), String.valueOf(discovery.getLong(CREDENTIALS_ID)), new JsonObject().put(PROVISION_ID, provisionId).put(IP_ADDRESS, discovery.getString(IP_ADDRESS)).put(PORT_NUMBER, discovery.getInteger(PORT_NUMBER)).encode());
 
-                            if (credentials != null)
-                            {
-                                long provisionId = Global.provisionCounter.incrementAndGet();
+                            String path = OUTPUT_PATH + FORWARD_SLASH + discovery.getString(IP_ADDRESS);
 
-                                JsonObject provisionData = new JsonObject();
+                            vertx.fileSystem().mkdirsBlocking(path).createFileBlocking(path + FORWARD_SLASH + CPU_METRIC + JSON_EXTENSION).createFileBlocking(path + FORWARD_SLASH + DISK_METRIC + JSON_EXTENSION).createFileBlocking(path + FORWARD_SLASH + PROCESS_METRIC + JSON_EXTENSION).createFileBlocking(path + FORWARD_SLASH + SYSTEM_METRIC + JSON_EXTENSION).createFileBlocking(path + FORWARD_SLASH + MEMORY_METRIC + JSON_EXTENSION);
 
-                                provisionData.put(Constant.PROVISION_ID, provisionId);
+                            logger.info(DIRECTORY_CREATION_SUCCESS);
 
-                                provisionData.put(Constant.IP_ADDRESS, discovery.getIp());
+                            logger.info(FILES_CREATION_SUCCESS);
 
-                                provisionData.put(Constant.PORT_NUMBER, discovery.getPort());
+                            credentials.put(COUNTER, credentials.getInteger(COUNTER) + 1);
 
-                                provisionStore.create(discovery.getIp(), String.valueOf(provisionId), String.valueOf(discovery.getCredentialProfileId()), provisionData.encode());
+                            credentialStore.update(credentials);
 
-                                result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                                result.put(Constant.PROVISION_ID, provisionId);
-
-                                result.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
-
-                                result.put(Constant.STATUS_MESSAGE, Constant.PROVISION_RUN_SUCCESS);
-
-                                String path = Constant.OUTPUT_PATH + Constant.FORWARD_SLASH + discovery.getIp();
-
-                                vertx.fileSystem().exists(path).onComplete(handler ->
-                                {
-                                    if (handler.succeeded())
-                                    {
-                                        if (handler.result().equals(false))
-                                        {
-                                            vertx.fileSystem().mkdir(path).onComplete(directoryHandler ->
-                                            {
-
-                                                if (directoryHandler.succeeded())
-                                                {
-                                                    System.out.println(Constant.DIRECTORY_CREATION_SUCCESS);
-                                                }
-
-                                                else
-                                                {
-                                                    System.out.println(directoryHandler.cause().getMessage());
-                                                }
-
-                                            });
-                                        }
-                                    }
-
-                                    else
-                                    {
-                                        promise.fail(handler.cause().getMessage());
-                                    }
-                                });
-
-                                credentials.incrementCounter();
-
-                                credentialStore.update(credentials);
-
-                                promise.complete(result);
-
-                            }
-
-                            else
-                            {
-                                promise.fail(Constant.CREDENTIALS_NOT_FOUND);
-                            }
+                            message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, provisionId));
                         }
-
                         else
                         {
-                            promise.fail(Constant.ALREADY_IN_PROVISION_LIST);
+                            message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, CREDENTIALS + DATA_DOES_NOT_EXIST));
                         }
                     }
-
                     else
                     {
-                        promise.fail(Constant.DEVICE_NOT_DISCOVERED);
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, ALREADY_IN_PROVISION_LIST_MESSAGE));
                     }
-
                 }
-
                 else
                 {
-                    promise.fail(Constant.DISCOVERY_NOT_FOUND);
+                    message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DEVICE_NOT_DISCOVERED_MESSAGE));
                 }
 
-            }, handler ->
+            }
+            else
             {
-                if (handler.succeeded())
-                {
-                    JsonObject successResult = (JsonObject) handler.result();
-
-                    message.reply(successResult);
-                }
-
-                else
-                {
-                    JsonObject failedresult = new JsonObject();
-
-                    switch (handler.cause().getMessage())
-                    {
-                        case Constant.DISCOVERY_NOT_FOUND ->
-                        {
-
-                            failedresult.put(Constant.STATUS, Constant.STATUS_FAIL);
-
-                            failedresult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                            failedresult.put(Constant.STATUS_MESSAGE, Constant.DISCOVERY + Constant.DATA_DOES_NOT_EXIST);
-
-                        }
-
-                        case Constant.CREDENTIALS_NOT_FOUND ->
-                        {
-                            failedresult.put(Constant.STATUS, Constant.STATUS_FAIL);
-
-                            failedresult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                            failedresult.put(Constant.STATUS_MESSAGE, Constant.CREDENTIALS + Constant.DATA_DOES_NOT_EXIST);
-                        }
-
-                        case Constant.DEVICE_NOT_DISCOVERED ->
-                        {
-                            failedresult.put(Constant.STATUS, Constant.STATUS_ERROR);
-
-                            failedresult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                            failedresult.put(Constant.STATUS_MESSAGE, Constant.DEVICE_NOT_DISCOVERED_MESSAGE);
-
-                        }
-
-                        case Constant.ALREADY_IN_PROVISION_LIST ->
-                        {
-                            failedresult.put(Constant.STATUS, Constant.STATUS_ERROR);
-
-                            failedresult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                            failedresult.put(Constant.STATUS_MESSAGE, Constant.PROVISION + Constant.DATA_ALREADY_EXISTS);
-
-                        }
-                    }
-
-                    message.reply(failedresult);
-                }
-            });
+                message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DISCOVERY + DATA_DOES_NOT_EXIST));
+            }
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
+
     }
 
     private void readAll(String type, Message<JsonObject> message)
     {
         try
         {
-            vertx.executeBlocking(promise ->
+            switch (type)
             {
-                switch (type)
+                case CREDENTIALS ->
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, credentialStore.readAll()));
+
+                case DISCOVERY ->
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, discoveryStore.readAll()));
+
+                case PROVISION ->
                 {
-                    case Constant.CREDENTIALS ->
+                    JsonArray resultData = new JsonArray();
+
+                    provisionStore.readAll().forEach(key ->
                     {
-                        CredentialStore credentialStore = CredentialStore.getInstance();
+                        List<String> list = provisionStore.read(key);
 
-                        if (credentialStore.readAll().size() > 0)
+                        if (list.size() > 0)
                         {
-                            JsonArray result = new JsonArray(credentialStore.readAll());
 
-                            promise.complete(new JsonObject().put(Constant.STATUS, Constant.STATUS_SUCCESS).put(Constant.STATUS_RESULT, result).put(Constant.TYPE, Constant.CREDENTIALS));
+                            JsonObject credentials = credentialStore.read(Long.parseLong(list.get(1)));
 
-                        }
-
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.STATUS, Constant.STATUS_FAIL).put(Constant.FAIL_TYPE, Constant.CREDENTIALS).encode());
-                        }
-                    }
-
-                    case Constant.DISCOVERY ->
-                    {
-                        DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                        if (discoveryStore.readAll().size() > 0)
-                        {
-                            JsonArray result = new JsonArray(discoveryStore.readAll());
-
-                            promise.complete(new JsonObject().put(Constant.STATUS, Constant.STATUS_SUCCESS).put(Constant.STATUS_RESULT, result).put(Constant.TYPE, Constant.DISCOVERY));
-
-                        }
-
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.STATUS, Constant.STATUS_FAIL).put(Constant.FAIL_TYPE, Constant.DISCOVERY).encode());
-                        }
-                    }
-
-                    case Constant.PROVISION ->
-                    {
-                        ProvisionStore provisionStore = ProvisionStore.getInstance();
-
-                        CredentialStore credentialStore = CredentialStore.getInstance();
-
-                        JsonArray resultData = new JsonArray();
-
-                        if (provisionStore.readAll().size() > 0)
-                        {
-                            provisionStore.readAll().forEach(key ->
+                            if (credentials != null)
                             {
-                                List<String> list = provisionStore.read(key);
-
-                                JsonObject data = new JsonObject(list.get(0));
-
-                                Credentials credentials = credentialStore.read(Long.parseLong(list.get(1)));
-
-                                data.put(Constant.USERNAME, credentials.getUsername());
-
-                                data.put(Constant.PASSWORD, credentials.getPassword());
-
-                                resultData.add(data);
-                            });
-
-                            promise.complete(new JsonObject().put(Constant.STATUS, Constant.STATUS_SUCCESS).put(Constant.STATUS_RESULT, resultData).put(Constant.TYPE, Constant.PROVISION));
+                                resultData.add(new JsonObject(list.get(0)).put(USERNAME, credentials.getString(USERNAME)).put(PASSWORD, credentials.getString(PASSWORD)));
+                            }
                         }
+                    });
 
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.STATUS, Constant.STATUS_FAIL).put(Constant.FAIL_TYPE, Constant.PROVISION).encode());
-                        }
-
-                    }
+                    message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS).put(STATUS_RESULT, resultData));
                 }
-
-
-            }, handler ->
-            {
-                if (handler.succeeded())
-                {
-                    JsonObject successResult = (JsonObject) handler.result();
-
-                    successResult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
-
-                    message.reply(successResult.encode());
-
-                }
-
-                else
-                {
-                    JsonObject failResult = new JsonObject(handler.cause().getMessage());
-
-                    failResult.put(Constant.STATUS_MESSAGE, Constant.DATA_DOES_NOT_EXIST);
-
-                    failResult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                    message.reply(failResult.encode());
-
-                }
-
-            });
-
+            }
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
     }
 
@@ -739,138 +397,93 @@ public class DatabaseEngine extends AbstractVerticle
     {
         try
         {
+            var data = message.body();
 
-            vertx.executeBlocking(promise ->
+            switch (type)
             {
-
-                var data = message.body();
-
-                switch (type)
+                case CREDENTIALS ->
                 {
-                    case Constant.CREDENTIALS ->
+                    long credentialsId = data.getLong(CREDENTIALS_ID);
+
+                    JsonObject credentials = credentialStore.read(credentialsId);
+
+                    if (credentials != null)
                     {
-                        CredentialStore credentialStore = CredentialStore.getInstance();
+                        if (credentials.getInteger(COUNTER) == 0)
+                        {
+                            credentialStore.delete(credentialsId);
 
-                        long credentialsId = data.getLong(Constant.CREDENTIALS_ID);
+                            message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS));
+                        }
+                        else
+                        {
+                            message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, PROFILE_ALREADY_IN_USE));
+                        }
+                    }
+                    else
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
+                    }
+                }
 
-                        Credentials credentials = credentialStore.read(credentialsId);
+                case DISCOVERY ->
+                {
+                    long discoveryId = data.getLong(DISCOVERY_ID);
+
+                    JsonObject discovery = discoveryStore.read(discoveryId);
+
+                    if (discovery != null)
+                    {
+                        discoveryStore.delete(discoveryId);
+
+                        message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS));
+                    }
+                    else
+                    {
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
+                    }
+                }
+
+                case PROVISION ->
+                {
+                    long provisionId = data.getLong(PROVISION_ID);
+
+                    List<String> provision = provisionStore.read(String.valueOf(provisionId));
+
+                    if (provision.size() > 0)
+                    {
+                        provisionStore.delete(String.valueOf(provisionId));
+
+                        JsonObject credentials = credentialStore.read(Long.parseLong(provision.get(1)));
 
                         if (credentials != null)
                         {
-                            if (credentials.getCounter() == 0)
-                            {
-                                credentialStore.delete(credentialsId);
-
-                                promise.complete(new JsonObject().put(Constant.TYPE, Constant.CREDENTIALS).put(Constant.STATUS, Constant.STATUS_SUCCESS));
-                            }
-
-                            else
-                            {
-                                promise.fail(new JsonObject().put(Constant.TYPE, Constant.CREDENTIALS).put(Constant.STATUS, Constant.STATUS_ERROR).encode());
-                            }
-                        }
-
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.TYPE, Constant.CREDENTIALS).put(Constant.STATUS, Constant.FAIL_TYPE).encode());
-                        }
-                    }
-
-                    case Constant.DISCOVERY ->
-                    {
-                        DiscoveryStore discoveryStore = DiscoveryStore.getInstance();
-
-                        long discoveryId = data.getLong(Constant.DISCOVERY_ID);
-
-                        Discovery discovery = discoveryStore.read(discoveryId);
-
-                        if (discovery != null)
-                        {
-                            discoveryStore.delete(discoveryId);
-
-                            promise.complete(new JsonObject().put(Constant.TYPE, Constant.DISCOVERY).put(Constant.STATUS, Constant.STATUS_SUCCESS));
-                        }
-
-                        else
-                        {
-                            promise.fail(new JsonObject().put(Constant.TYPE, Constant.DISCOVERY).put(Constant.STATUS, Constant.STATUS_FAIL).encode());
-                        }
-                    }
-
-                    case Constant.PROVISION ->
-                    {
-                        ProvisionStore provisionStore = ProvisionStore.getInstance();
-
-                        long provisionId = data.getLong(Constant.PROVISION_ID);
-
-                        List<String> provision = provisionStore.read(String.valueOf(provisionId));
-
-                        if (provision.size() > 0)
-                        {
-                            provisionStore.delete(String.valueOf(provisionId));
-
-                            CredentialStore credentialStore = CredentialStore.getInstance();
-
-                            Credentials credentials = credentialStore.read(Long.parseLong(provision.get(1)));
-
-                            credentials.decrementCounter();
+                            credentials.put(COUNTER, credentials.getInteger(COUNTER) - 1);
 
                             credentialStore.update(credentials);
 
-                            promise.complete(new JsonObject().put(Constant.TYPE, Constant.PROVISION).put(Constant.STATUS, Constant.STATUS_SUCCESS));
-                        }
+                            message.reply(new JsonObject().put(STATUS, STATUS_SUCCESS));
 
+                        }
                         else
                         {
-                            promise.fail(new JsonObject().put(Constant.TYPE, Constant.PROVISION).put(Constant.STATUS, Constant.STATUS_FAIL).encode());
+                            message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, CREDENTIALS + DATA_DOES_NOT_EXIST));
                         }
-                    }
-                }
-
-            }, handler ->
-            {
-
-                if (handler.succeeded())
-                {
-                    JsonObject successResult = (JsonObject) handler.result();
-
-                    successResult.put(Constant.STATUS_MESSAGE, Constant.DELETE_SUCCESS);
-
-                    successResult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
-
-                    message.reply(successResult);
-
-                }
-
-                else
-                {
-                    JsonObject errorResult = new JsonObject(handler.cause().getMessage());
-
-                    if (errorResult.getString(Constant.STATUS).equals(Constant.STATUS_FAIL))
-                    {
-                        errorResult.put(Constant.STATUS_MESSAGE, Constant.DATA_DOES_NOT_EXIST);
 
                     }
-
                     else
                     {
-                        errorResult.put(Constant.STATUS_MESSAGE, Constant.PROFILE_ALREADY_IN_USE);
-
-                        errorResult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
+                        message.reply(new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_ERROR, DATA_DOES_NOT_EXIST));
                     }
-
-                    errorResult.put(Constant.STATUS_CODE, Constant.STATUS_CODE_BAD_REQUEST);
-
-                    message.reply(errorResult);
-
                 }
+            }
 
-            });
         }
-
         catch (Exception exception)
         {
-            System.out.println(exception.getMessage());
+            logger.error(exception.getMessage());
+
+            message.fail(STATUS_CODE_INTERNAL_SERVER_ERROR, exception.getMessage());
         }
     }
 }

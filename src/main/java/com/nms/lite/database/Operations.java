@@ -1,12 +1,18 @@
 package com.nms.lite.database;
 
-import java.util.List;
+import io.vertx.core.json.JsonArray;
+import io.vertx.core.json.JsonObject;
 
-public interface Operations<T>
+
+public interface Operations
 {
-    void create(T data);
-    T read(long id);
-    List<T> readAll();
-    void update(T data);
-    boolean delete(long id);
+    void create(JsonObject data);
+
+    JsonObject read(long id);
+
+    JsonArray readAll();
+
+    void update(JsonObject data);
+
+    void delete(long id);
 }

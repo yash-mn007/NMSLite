@@ -1,71 +1,82 @@
 package com.nms.lite.utility;
 
+import io.vertx.core.json.JsonArray;
 import io.vertx.core.json.JsonObject;
-
-import java.util.ArrayList;
-import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import static com.nms.lite.utility.Constant.*;
 
 public class RequestValidator
 {
+    private static final Logger logger = LoggerFactory.getLogger(RequestValidator.class);
     public static Pattern pattern;
     public static Matcher matcher;
 
     public static JsonObject validateRequestBody(JsonObject requestBody)
     {
-        List<String> errors = new ArrayList<>();
-
-        requestBody.fieldNames().forEach(key ->
+        try
         {
-            var isNull = checkNull(requestBody.getString(key).trim());
+            JsonArray errors = new JsonArray();
 
-            if (isNull)
+            requestBody.fieldNames().forEach(key ->
             {
-                addErrors(errors, key);
-            }
+                var isNull = checkNull(requestBody.getString(key).trim());
 
-            if (key.equals(Constant.PASSWORD))
-            {
-                if (!validatePattern(Constant.PASS_REGEX, requestBody.getString(key).trim()))
-                {
-                    addErrors(errors, key);
-                }
-            }
-
-            if (key.equals(Constant.CREDENTIALS_ID) || key.equals(Constant.DISCOVERY_ID) || key.equals(Constant.PROVISION_ID))
-            {
-                if (!validatePattern(Constant.DIGITS_REGEX, String.valueOf(requestBody.getLong(key))))
-                {
-                    addErrors(errors, key);
-                }
-            }
-
-            if (key.equals(Constant.IP_ADDRESS))
-            {
-                if (!validatePattern(Constant.IP_REGEX, requestBody.getString(key).trim()))
-                {
-                    addErrors(errors, key);
-                }
-            }
-
-            if (key.equals(Constant.PORT_NUMBER))
-            {
-                if (!validatePattern(Constant.DIGITS_REGEX, String.valueOf(requestBody.getInteger(key))))
+                if (isNull)
                 {
                     addErrors(errors, key);
                 }
 
-                if (!validatePattern(Constant.PORT_REGEX, String.valueOf(requestBody.getInteger(key))))
+                if (key.equals(PASSWORD))
                 {
-                    addErrors(errors, key);
+                    if (!validatePattern(PASS_REGEX, requestBody.getString(key).trim()))
+                    {
+                        addErrors(errors, key);
+                    }
                 }
-            }
 
-        });
+                if (key.equals(CREDENTIALS_ID) || key.equals(DISCOVERY_ID) || key.equals(PROVISION_ID))
+                {
+                    if (!validatePattern(DIGITS_REGEX, String.valueOf(requestBody.getLong(key))))
+                    {
+                        addErrors(errors, key);
+                    }
+                }
 
+                if (key.equals(IP_ADDRESS))
+                {
+                    if (!validatePattern(IP_REGEX, requestBody.getString(key).trim()))
+                    {
+                        addErrors(errors, key);
+                    }
+                }
 
-        return new JsonObject().put(Constant.STATUS_ERROR, errors);
+                if (key.equals(PORT_NUMBER))
+                {
+                    if (!validatePattern(DIGITS_REGEX, String.valueOf(requestBody.getInteger(key))))
+                    {
+                        addErrors(errors, key);
+                    }
+
+                    if (!validatePattern(PORT_REGEX, String.valueOf(requestBody.getInteger(key))))
+                    {
+                        addErrors(errors, key);
+                    }
+                }
+
+            });
+
+            return new JsonObject().put(STATUS_ERROR, errors);
+        }
+
+        catch (Exception exception)
+        {
+            logger.error(exception.getMessage());
+
+            return new JsonObject().put(STATUS, STATUS_FAIL).put(STATUS_MESSAGE, SOME_EXCEPTION_OCCURRED);
+        }
     }
 
     public static boolean validatePattern(String regexPattern, String input)
@@ -80,12 +91,12 @@ public class RequestValidator
 
     public static boolean checkNull(String input)
     {
-        return input == null || input.equalsIgnoreCase(Constant.EMPTY_STRING);
+        return input == null || input.equalsIgnoreCase(EMPTY_STRING);
     }
 
-    private static void addErrors(List<String> errors, String key)
+    private static void addErrors(JsonArray errors, String key)
     {
-        errors.add(Constant.INVALID + Constant.EMPTY_SPACE + key);
+        errors.add(INVALID + EMPTY_SPACE + key);
     }
 
 }

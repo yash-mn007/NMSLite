@@ -5,30 +5,32 @@ import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import io.vertx.core.Vertx;
 import io.vertx.core.json.JsonObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.BufferedReader;
-
+import java.util.Base64;
 import java.util.List;
+
+import static com.nms.lite.utility.Constant.*;
 
 import java.util.concurrent.TimeUnit;
 
 public class BuildProcess
 {
-    private final Vertx vertx = Bootstrap.getVertxInstance();
+    private static final Logger logger = LoggerFactory.getLogger(BuildProcess.class);
 
-    public Future<JsonObject> build(List<String> command, long timeout)
+    public static Future<JsonObject> build(List<String> command, long timeout, boolean base64Encoded)
     {
-
         Promise<JsonObject> promise = Promise.promise();
 
         var processBuilder = new ProcessBuilder(command);
 
-        vertx.executeBlocking(task ->
+        processBuilder.redirectErrorStream(true);
+
+        Bootstrap.vertx.executeBlocking(task ->
         {
-
             BufferedReader inputReader = null;
-
-            BufferedReader errorReader = null;
 
             Process process = null;
 
@@ -36,74 +38,49 @@ public class BuildProcess
             {
                 process = processBuilder.start();
 
-                boolean completed = process.waitFor(timeout, TimeUnit.MILLISECONDS);
-
-                if (!completed)
+                if (!process.waitFor(timeout, TimeUnit.MILLISECONDS))
                 {
                     process.destroyForcibly();
                 }
 
-                int exitCode = process.waitFor();
-
-                if (exitCode != Constant.PROCESS_ABNORMAL_TERMINATION_CODE)
+                if (process.waitFor() != PROCESS_ABNORMAL_TERMINATION_CODE)
                 {
-                    JsonObject result = new JsonObject();
-
                     inputReader = process.inputReader();
 
-                    errorReader = process.errorReader();
-
                     StringBuilder output = new StringBuilder();
-
-                    StringBuilder errorOutput = new StringBuilder();
 
                     String read;
 
                     while ((read = inputReader.readLine()) != null)
                     {
-                        output.append(read).append(Constant.NEW_LINE);
+                        output.append(read).append(NEW_LINE);
                     }
 
-                    while ((read = errorReader.readLine()) != null)
+                    if (base64Encoded)
                     {
-                        errorOutput.append(read).append(Constant.NEW_LINE);
+                        Base64.Decoder decoder = Base64.getMimeDecoder();
+
+                        if (output.toString().length() > 0)
+                        {
+                            output = new StringBuilder(new String(decoder.decode(output.toString())));
+                        }
                     }
 
-                    result.put(Constant.STATUS, Constant.STATUS_SUCCESS);
-
-                    result.put(Constant.STATUS_CODE, Constant.STATUS_CODE_OK);
-
-                    result.put(Constant.PROCESS_STATUS, Constant.PROCESS_NORMAL);
-
-                    result.put(Constant.STATUS_RESULT, output.toString());
-
-                    result.put(Constant.STATUS_ERROR, errorOutput.toString());
-
-                    task.complete(result);
-
+                    task.complete(new JsonObject().put(STATUS, STATUS_SUCCESS).put(PROCESS_STATUS, PROCESS_NORMAL).put(STATUS_RESULT, output.toString()));
                 }
 
                 else
                 {
-                    JsonObject errorResult = new JsonObject();
-
-                    errorResult.put(Constant.STATUS, Constant.STATUS_FAIL);
-
-                    errorResult.put(Constant.PROCESS_STATUS, Constant.PROCESS_ABNORMAL);
-
-                    errorResult.put(Constant.STATUS_RESULT, Constant.EMPTY_STRING);
-
-                    errorResult.put(Constant.STATUS_MESSAGE, Constant.PROCESS_ABNORMALLY_TERMINATED);
-
-                    task.fail(errorResult.encode());
-
+                    task.fail(new JsonObject().put(STATUS, STATUS_FAIL).put(PROCESS_STATUS, PROCESS_ABNORMAL).put(STATUS_MESSAGE, PROCESS_ABNORMALLY_TERMINATED).encode());
                 }
 
             }
 
             catch (Exception exception)
             {
-                exception.printStackTrace();
+                logger.error(exception.getMessage());
+
+                task.fail(exception.getMessage());
             }
 
             finally
@@ -115,11 +92,6 @@ public class BuildProcess
                         inputReader.close();
                     }
 
-                    if (errorReader != null)
-                    {
-                        errorReader.close();
-                    }
-
                     if (process != null && process.isAlive())
                     {
                         process.destroyForcibly();
@@ -128,7 +100,7 @@ public class BuildProcess
 
                 catch (Exception exception)
                 {
-                    exception.printStackTrace();
+                    logger.error(exception.getMessage());
                 }
             }
 
